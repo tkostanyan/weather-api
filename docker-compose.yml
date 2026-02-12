@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # ===================
+  # Redis Cache (Local)
+  # ===================
+  redis:
+    image: redis:7-alpine
+    container_name: weather-redis
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - weather-network
+
+  # ===================
+  # MongoDB Database (Local)
+  # ===================
+  mongodb:
+    image: mongo:7
+    container_name: weather-mongodb
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - weather-network
+
+  # ===================
+  # Development Mode
+  # ===================
+  weather-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: weather-api
+    ports:
+      - "8001:8000"
+    environment:
+      - ENVIRONMENT=local
+      - WEATHER_API_KEY=${WEATHER_API_KEY:-your_api_key_here}
+      - WEATHER_API_BASE_URL=${WEATHER_API_BASE_URL:-https://api.openweathermap.org/data/2.5}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-300}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MONGODB_CONNECTION_STRING=mongodb://mongodb:27017
+      - MONGODB_DATABASE_NAME=weather_api
+      - DATA_DIR=/app/data
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-100}
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./app:/app/app:ro
+      - ./data:/app/data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - weather-network
+
+  # ===================
+  # Test Runner
+  # ===================
+  weather-api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: weather-api-test
+    environment:
+      - ENVIRONMENT=test
+      - WEATHER_API_KEY=test_api_key_12345
+      - WEATHER_API_BASE_URL=${WEATHER_API_BASE_URL:-https://api.openweathermap.org/data/2.5}
+      - CACHE_TTL_SECONDS=300
+      - DATA_DIR=/app/data
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./app:/app/app:ro
+      - ./tests:/app/tests:ro
+      - ./data:/app/data
+    entrypoint: ["/opt/venv/bin/python", "-m", "pytest", "-vv", "tests/test_weather_api.py"]
+    networks:
+      - weather-network
+
+volumes:
+  weather_data:
+    driver: local
+  weather_data_dev:
+    driver: local
+  redis_data:
+    driver: local
+  mongodb_data:
+    driver: local
+
+networks:
+  weather-network:
+    driver: bridge
